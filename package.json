@@ -1,0 +1,25 @@
+{
+  "name": "pingpong-tg-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A configurable Telegram user-account reply client",
+  "license": "CC0-1.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "login": "node src/login.js",
+    "chats": "node src/chats.js",
+    "test": "node --test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "teleproto": "1.230.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  }
+}
