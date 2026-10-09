@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This Node.js Telegram user-account client uses `teleproto`, the maintained GramJS fork. `src/` contains configuration, authentication, group discovery, listener setup, reply rules, and session persistence. `test/` contains automated tests. `README.md` documents operation; `.env.example` lists configuration. No assets or build output are required.
+This Node.js Telegram user-account client uses `teleproto`, the maintained GramJS fork. `src/` contains configuration, duration parsing, authentication, group discovery, listener setup, debounce scheduling, reply rules, and session persistence. `test/` contains automated tests and fake timer support. `README.md` documents operation; `.env.example` lists configuration. No assets or build output are required.
 
 ## Build, Test, and Development Commands
 
@@ -23,11 +23,13 @@ Use CommonJS JavaScript, two-space indentation, single quotes, and semicolons; P
 
 ## Testing Guidelines
 
-Name tests `test/*.test.js`. Mock network operations and use temporary directories for persistence tests. Cover reply rules, author checks, duplicate delivery, connection recovery, configuration errors, and credential handling. Add regression tests for fixes. No numerical coverage threshold is configured. Record live account testing separately from automated checks.
+Name tests `test/*.test.js`. Mock network operations and use temporary directories for persistence tests. Inject randomness and fake timers for delay tests; never wait hours or use flaky statistical assertions. Cover burst replacement, out-of-order validation, fresh-message checks, cancellation, configuration bounds, and existing reply rules. Add regression tests for fixes. No numerical coverage threshold is configured. Record live account testing separately from automated checks.
 
 ## Behavior & Configuration
 
-Authenticate as a user, not a Bot API account. Handle one group and direct replies to any personally authored message. Match the entire trimmed trigger ignoring case; send literal response text. Ignore outgoing and edited messages and historical updates. Pause during reconnect catch-up. Use one process per account/group; deduplication is bounded and in memory.
+Authenticate as a user, not a Bot API account. Handle one group and direct replies to any personally authored message. Match the entire trimmed trigger ignoring case; send literal response text. Maintain one group-wide debounce timer: each eligible ping replaces the pending reply, and only the latest ping receives a response. Nonqualifying messages and duplicates do not reset it. Do not send typing-status updates.
+
+`REPLY_DELAY_MIN` and `REPLY_DELAY_MAX` accept nonnegative integer `ms`, `s`, `m`, or `h` durations, defaulting to `1s` and `3s`. Validate ordered bounds and the native timer limit of `2147483647ms`. Re-fetch and validate messages before sending. Cancel timers and invalidate asynchronous work on disconnect, reconnect initiation, or shutdown; restart discards pending work. Ignore outgoing and edited-message updates and historical messages. Use one process per account/group; scheduling and bounded deduplication stay in memory.
 
 ## Commit & Pull Request Guidelines
 

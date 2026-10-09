@@ -14,6 +14,8 @@ test('preserves group IDs as strings and defaults ping/pong', () => {
   assert.equal(config.chatId, env.TELEGRAM_CHAT_ID);
   assert.equal(config.trigger, 'ping');
   assert.equal(config.reply, 'pong');
+  assert.equal(config.replyDelayMinMs, 1000);
+  assert.equal(config.replyDelayMaxMs, 3000);
 });
 
 test('login requires only API credentials; chat listing does not require a group', () => {
@@ -59,4 +61,65 @@ test('preserves response formatting and trims trigger whitespace', () => {
   });
   assert.equal(config.trigger, 'knock');
   assert.equal(config.reply, '  hello\nthere  ');
+});
+
+test('parses broad delay ranges in milliseconds, seconds, minutes, and hours', () => {
+  for (const [min, max, expectedMin, expectedMax] of [
+    ['1s', '3s', 1000, 3000],
+    ['1s', '1h', 1000, 3600000],
+    ['2h', '4h', 7200000, 14400000],
+    ['0ms', '30m', 0, 1800000],
+    [' 500ms ', '500ms', 500, 500],
+    ['0ms', '2147483647ms', 0, 2147483647],
+  ]) {
+    const config = readConfig('start', {
+      ...env,
+      REPLY_DELAY_MIN: min,
+      REPLY_DELAY_MAX: max,
+    });
+    assert.equal(config.replyDelayMinMs, expectedMin);
+    assert.equal(config.replyDelayMaxMs, expectedMax);
+  }
+});
+
+for (const name of ['REPLY_DELAY_MIN', 'REPLY_DELAY_MAX']) {
+  test(`rejects invalid durations for ${name}`, () => {
+    for (const value of [
+      '',
+      '-1s',
+      '1.5h',
+      '1',
+      'NaN',
+      '1d',
+      '1seconds',
+      '2147483648ms',
+      '597h',
+      '9'.repeat(50) + 'h',
+    ]) {
+      assert.throws(
+        () => readConfig('start', { ...env, [name]: value }),
+        new RegExp(name),
+      );
+    }
+  });
+}
+
+test('rejects reversed ranges; unrelated commands do not require delay settings', () => {
+  assert.throws(
+    () =>
+      readConfig('start', {
+        ...env,
+        REPLY_DELAY_MIN: '4h',
+        REPLY_DELAY_MAX: '2h',
+      }),
+    /REPLY_DELAY_MIN must not exceed REPLY_DELAY_MAX/,
+  );
+  assert.equal(
+    readConfig('login', { ...env, REPLY_DELAY_MIN: 'bad' }).apiId,
+    12345,
+  );
+  assert.equal(
+    readConfig('chats', { ...env, REPLY_DELAY_MAX: 'bad' }).apiId,
+    12345,
+  );
 });

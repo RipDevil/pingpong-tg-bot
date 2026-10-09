@@ -35,12 +35,13 @@ async function connectAuthorized(client) {
   }
 }
 
-function installShutdown(client) {
+function installShutdown(client, beforeStop = () => {}) {
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
     stopping = true;
     try {
+      beforeStop();
       await client.destroy();
     } finally {
       process.exit(0);

@@ -11,7 +11,8 @@ const { UserError, reportError } = require('./errors');
 async function main() {
   const config = loadConfig('start');
   const client = createClient(config);
-  installShutdown(client);
+  let stopListening = () => {};
+  installShutdown(client, () => stopListening());
   try {
     await connectAuthorized(client);
     const self = await client.getMe();
@@ -31,9 +32,10 @@ async function main() {
         'Configured group is unavailable. Check membership and run npm run chats.',
       );
     }
-    installListener(client, config, self.id.toString());
+    stopListening = installListener(client, config, self.id.toString());
     console.log('Listening in the configured group. Press Ctrl+C to stop.');
   } catch (error) {
+    stopListening();
     await client.destroy();
     throw error;
   }

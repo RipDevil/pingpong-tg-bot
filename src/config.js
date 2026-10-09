@@ -1,6 +1,7 @@
 const path = require('node:path');
 const dotenv = require('dotenv');
 const { UserError } = require('./errors');
+const { parseDuration } = require('./duration');
 
 const envPath = path.resolve(__dirname, '..', '.env');
 
@@ -40,6 +41,17 @@ function readConfig(mode = 'start', env = process.env) {
     }
     if (config.reply.length > 4096) {
       throw new UserError('REPLY_MESSAGE must not exceed 4096 characters.');
+    }
+    config.replyDelayMinMs = parseDuration(
+      env.REPLY_DELAY_MIN ?? '1s',
+      'REPLY_DELAY_MIN',
+    );
+    config.replyDelayMaxMs = parseDuration(
+      env.REPLY_DELAY_MAX ?? '3s',
+      'REPLY_DELAY_MAX',
+    );
+    if (config.replyDelayMinMs > config.replyDelayMaxMs) {
+      throw new UserError('REPLY_DELAY_MIN must not exceed REPLY_DELAY_MAX.');
     }
   }
   return config;

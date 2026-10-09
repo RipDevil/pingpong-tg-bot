@@ -1,3 +1,5 @@
+const { createDebouncer } = require('./debounce');
+
 function createHandler({
   client,
   config,
@@ -5,33 +7,64 @@ function createHandler({
   chatIdOf,
   isLive,
   log = console.error,
+  timers = {},
 }) {
   const seen = new Set();
-  return async (event) => {
-    const message = event.message;
-    if (!message || message.out || chatIdOf(message) !== config.chatId) return;
-    if (!isLive(message)) return;
-    if (message.message?.trim().toLowerCase() !== config.trigger.toLowerCase())
-      return;
-    const replyId = message.replyTo?.replyToMsgId;
-    if (!replyId || seen.has(message.id)) return;
-    seen.add(message.id);
-    if (seen.size > 1000) seen.delete(seen.values().next().value);
-    try {
-      const parent = await message.getReplyMessage();
-      if (!parent || parent.senderId?.toString() !== selfId) return;
-      if (chatIdOf(parent) !== config.chatId || !isLive(message)) return;
-      await client.sendMessage(message.peerId, {
+  const reportFailure = () =>
+    log(
+      'Unable to process a trigger; check group access and Telegram connectivity.',
+    );
+  const qualifies = (message) =>
+    message &&
+    !message.out &&
+    chatIdOf(message) === config.chatId &&
+    isLive(message) &&
+    message.replyTo?.replyToMsgId &&
+    message.message?.trim().toLowerCase() === config.trigger.toLowerCase();
+  const ownParent = async (message) => {
+    const parent = await message.getReplyMessage();
+    return (
+      parent &&
+      parent.senderId?.toString() === selfId &&
+      chatIdOf(parent) === config.chatId
+    );
+  };
+  const debouncer = createDebouncer({
+    minMs: config.replyDelayMinMs ?? 1000,
+    maxMs: config.replyDelayMaxMs ?? 3000,
+    ...timers,
+    onError: reportFailure,
+    async onFire(pending, current) {
+      // Fetch fresh objects rather than using getReplyMessage's cached parent.
+      const [message] = await client.getMessages(pending.peerId, {
+        ids: [pending.id],
+      });
+      if (!current() || !qualifies(message)) return;
+      if (!(await ownParent(message)) || !current() || !isLive(message)) return;
+      await client.sendMessage(pending.peerId, {
         message: config.reply,
-        replyTo: message.id,
+        replyTo: pending.id,
         parseMode: false,
       });
+    },
+  });
+
+  const handler = async (event) => {
+    const message = event.message;
+    const epoch = debouncer.epoch;
+    try {
+      if (!qualifies(message) || seen.has(message.id)) return;
+      seen.add(message.id);
+      if (seen.size > 1000) seen.delete(seen.values().next().value);
+      if (!(await ownParent(message))) return;
+      if (epoch !== debouncer.epoch || !isLive(message)) return;
+      debouncer.schedule(message);
     } catch {
-      log(
-        'Unable to process a trigger; check group access and Telegram connectivity.',
-      );
+      reportFailure();
     }
   };
+  handler.cancelPending = () => debouncer.cancel();
+  return handler;
 }
 
 module.exports = { createHandler };

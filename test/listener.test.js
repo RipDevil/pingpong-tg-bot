@@ -4,6 +4,7 @@ const { Api, utils } = require('teleproto');
 const { NewMessage } = require('teleproto/events');
 const { installListener } = require('../src/listener');
 const { createClient, connectAuthorized } = require('../src/client');
+const { createFakeTimers } = require('./support/fake-timers.cjs');
 
 before(async () => {
   // Constructing a client installs the library's message conveniences on Api.
@@ -18,15 +19,27 @@ function fixture() {
   const sent = [];
   let handler;
   let builder;
+  const timers = createFakeTimers();
+  const messages = new Map();
+  let removed = false;
   const client = {
     onDisconnect(fn) {
       callbacks.disconnect = fn;
+      return () => {};
     },
     onReconnecting(fn) {
       callbacks.reconnecting = fn;
+      return () => {};
     },
     onReconnect(fn) {
       callbacks.reconnect = fn;
+      return () => {};
+    },
+    removeEventHandler() {
+      removed = true;
+    },
+    async getMessages(peer, { ids }) {
+      return ids.map((id) => messages.get(id));
     },
     addEventHandler(fn, eventBuilder) {
       handler = fn;
@@ -36,12 +49,36 @@ function fixture() {
       sent.push({ peer: utils.getPeerId(peer), ...options });
     },
   };
-  installListener(
+  const stop = installListener(
     client,
-    { chatId: '-100123', trigger: 'ping', reply: 'pong' },
+    {
+      chatId: '-100123',
+      trigger: 'ping',
+      reply: 'pong',
+      replyDelayMinMs: 0,
+      replyDelayMaxMs: 0,
+    },
     '9007199254740993',
+    timers.options,
   );
-  return { client, callbacks, sent, handler, builder };
+  const enqueue = async (event) => {
+    messages.set(event.message.id, event.message);
+    await handler(event);
+  };
+  return {
+    client,
+    callbacks,
+    sent,
+    builder,
+    timers,
+    stop,
+    enqueue,
+    removed: () => removed,
+    async handler(event) {
+      await enqueue(event);
+      await timers.advance(0);
+    },
+  };
 }
 
 function message({ channel = true, outgoing = false, old = false } = {}) {
@@ -147,3 +184,22 @@ test('authorization check requires a valid session', async () => {
   );
   assert.equal(connected, true);
 });
+
+for (const action of ['disconnect', 'reconnecting', 'stop']) {
+  test(`${action} cancels queued replies and prevents later sends`, async () => {
+    const f = fixture();
+    await f.enqueue({ message: message() });
+    assert.equal(f.timers.pending, 1);
+    if (action === 'stop') f.stop();
+    else f.callbacks[action]();
+    assert.equal(f.timers.pending, 0);
+    f.callbacks.reconnect();
+    await f.timers.advance(14400000);
+    assert.equal(f.sent.length, 0);
+    if (action === 'stop') {
+      assert.equal(f.removed(), true);
+      await f.handler({ message: message() });
+      assert.equal(f.timers.pending, 0);
+    }
+  });
+}

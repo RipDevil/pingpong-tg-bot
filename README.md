@@ -1,6 +1,6 @@
 # Telegram Ping/Pong
 
-A small Node.js client that replies as your existing Telegram user account in one group. When someone replies `ping` to any message you authored, your account replies `pong` to their trigger message.
+A small Node.js client that replies as your existing Telegram user account in one group. Qualifying `ping` replies to your messages start a random debounce timer; once it expires, your account replies `pong` to the latest ping in the burst.
 
 Uses Telegram's MTProto user API through [teleproto](https://www.npmjs.com/package/teleproto), the maintained GramJS fork. You do not need a BotFather token.
 
@@ -39,31 +39,54 @@ All commands read the repository's `.env`, even when launched from another direc
 | `TELEGRAM_CHAT_ID`  | Negative group ID printed by `npm run chats`; keep the full value, including `-100` when present. |
 | `TRIGGER_MESSAGE`   | Whole-message trigger; defaults to `ping`.                                                        |
 | `REPLY_MESSAGE`     | Plain-text response; defaults to `pong`.                                                          |
+| `REPLY_DELAY_MIN`   | Minimum random debounce duration; defaults to `1s`.                                               |
+| `REPLY_DELAY_MAX`   | Maximum random debounce duration; defaults to `3s`.                                               |
 
-For example, change the last two settings to:
+For example, change the trigger, response, and timing to:
 
 ```dotenv
 TRIGGER_MESSAGE="knock knock"
 REPLY_MESSAGE="Who's there?"
+REPLY_DELAY_MIN=1s
+REPLY_DELAY_MAX=3s
 ```
 
 Restart after changing configuration. Quote values containing spaces or `#`; dotenv also supports quoted multiline values. Empty trigger/response values are rejected, and the response is limited to 4096 characters.
+
+Delay settings accept nonnegative integer durations with `ms`, `s`, `m`, or `h` suffixes. The minimum must not exceed the maximum; each bound is limited to `2147483647ms` (about 24.9 days). Equal bounds produce a fixed delay; `0ms` for both schedules the response on the next timer tick. For broader timing, use either of these ranges:
+
+```dotenv
+# Between one second and one hour:
+REPLY_DELAY_MIN=1s
+REPLY_DELAY_MAX=1h
+```
+
+```dotenv
+# Between two and four hours:
+REPLY_DELAY_MIN=2h
+REPLY_DELAY_MAX=4h
+```
+
+Existing `.env` files need no migration: missing delay settings use the 1–3 second defaults. Add the optional settings without replacing your saved credentials.
 
 ## Reply Behavior
 
 - The whole trigger is matched without case sensitivity, after trimming surrounding whitespace: `PING` works, `ping please` does not.
 - Only direct replies to messages sent by your personal account in the configured group qualify. Replies to other people or messages you sent as a channel do not.
+- One pending reply is shared across the whole group, including different senders and conversation threads. Each qualifying ping replaces it and starts a fresh, uniformly random timer within the configured inclusive bounds. A continuing burst can postpone the reply indefinitely; only the latest eligible ping gets a response once its timer expires.
+- Nonqualifying messages and duplicate deliveries do not reset the timer. No typing-status updates are sent.
 - The response replies to the incoming trigger, not to your earlier message. Response text is sent literally, without Markdown parsing.
-- Your own outgoing messages, edited messages, other chats, unavailable referenced messages, and historical messages are ignored.
+- Your own outgoing messages, edited-message updates, other chats, unavailable referenced messages, and historical messages are ignored. Before a delayed send, the app fetches the trigger and referenced message again and skips them if deleted or no longer qualifying.
 - Only live messages are handled. During reconnection, replies are paused; messages from the offline interval are ignored when listening resumes. Telegram timestamps have one-second precision, so the boundary second cannot distinguish old and new messages exactly.
 - The most recent 1000 processed trigger IDs are deduplicated in memory. Run only one instance for a given account/group; there is no cross-process coordination.
+- Disconnects, reconnect initiation, shutdown, and restarts discard the pending reply, including waits lasting hours. It is not persisted or replayed after recovery. Cancellation cannot undo a send request already submitted to Telegram.
 - The library reconnects automatically and waits out flood limits up to 60 seconds. Longer waits or other failed requests are reported without stopping the listener; failed triggers are not explicitly retried by this application.
 
 ## Running on a PC or Server
 
 Run `npm start` in a terminal, or keep it in a `tmux`/`screen` session on a server. The process must stay running, the machine must stay awake, and Telegram must be reachable. For automatic restart, use your operating system's service manager with Node.js and this repository as its working directory. No containers, compilation, database, or web server are needed.
 
-Ctrl+C or SIGTERM releases the client connection. Startup configuration and authorization failures exit with a nonzero status.
+Ctrl+C or SIGTERM cancels pending replies before releasing the client connection. Startup configuration and authorization failures exit with a nonzero status.
 
 ## Development and Testing
 
@@ -73,9 +96,9 @@ npm run format    # Format JavaScript, JSON, and Markdown
 npm run format:check
 ```
 
-Source modules live in `src/` and `*.test.js` tests in `test/`. Tests cover reply rules, real-library event filtering, reconnect boundaries, errors, configuration, and session persistence. They do not need a Telegram account or network connection.
+Source modules live in `src/` and `*.test.js` tests in `test/`. Tests cover reply rules, real-library event filtering, duration parsing, debounce timing, overlapping validation, cancellation, errors, configuration, and session persistence. Injected randomness and fake timers exercise hours-long waits without real delays. They do not need a Telegram account or network connection.
 
-For a live smoke test, use a friends' test group: send any message from your account, ask a friend to reply `ping`, and confirm a threaded `pong` from your account. Verify non-replies and replies to others produce no response; then restart the app and repeat without logging in again.
+For a live smoke test, set both delay bounds to `3s`, restart the app, and use a friends' test group. Send any message from your account, ask a friend to reply `ping`, and confirm a threaded `pong` after the pause. Send several qualifying pings less than three seconds apart and confirm only the last gets a reply. Verify non-replies and replies to others produce no response. Stop and restart during a pending wait to confirm it is discarded, then restore your desired range. Reuse the saved login throughout.
 
 ## Credentials
 
